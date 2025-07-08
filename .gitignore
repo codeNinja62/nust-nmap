@@ -80,9 +80,21 @@ Thumbs.db
 nmap_scan_*
 scan_results/
 test_results/
+*.log
+*.tmp
+temp/
+tmp/
+
+# PyPI build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+MANIFEST
 
 # Documentation
 docs/_build/
+docs/build/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -95,3 +107,24 @@ Pipfile.lock
 
 # Poetry
 poetry.lock
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# pytest
+.pytest_cache/
+
+# pipx
+.local/
+
+# Environment variables
+.env.local
+.env.*.local
