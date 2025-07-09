@@ -25,6 +25,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.github/prompts/
+
 
 # PyInstaller
 *.manifest
@@ -74,16 +76,39 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Project specific
+# Project specific - nmap output files
 *.xml
 *.csv
+*.json
+*.txt
 nmap_scan_*
+nmap_output_*
 scan_results/
 test_results/
+output/
+reports/
 *.log
 *.tmp
 temp/
 tmp/
+*.nmap
+*.gnmap
+
+# Security sensitive files
+secrets/
+credentials/
+keys/
+*.key
+*.pem
+*.p12
+*.pfx
+config.ini
+.secrets
+
+# Nmap temporary files
+/tmp/nmap_*
+.nmap_*
+nmap_temp_*
 
 # PyPI build artifacts
 build/
@@ -128,3 +153,90 @@ dmypy.json
 # Environment variables
 .env.local
 .env.*.local
+
+# Security and compliance
+audit.log
+compliance_reports/
+penetration_test_results/
+vulnerability_scans/
+
+# Performance and profiling
+*.prof
+*.profile
+performance_logs/
+benchmarks/
+profiling_results/
+
+# Database files (if any)
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*~
+*.orig
+
+# Archive files
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# Network capture files
+*.pcap
+*.pcapng
+*.cap
+
+# Large files and datasets
+datasets/
+large_networks/
+enterprise_scans/
+*.dump
+
+# IDE and editor specific
+.vscode/settings.json
+.vscode/launch.json
+.idea/workspace.xml
+.idea/tasks.xml
+*.sublime-project
+*.sublime-workspace
+
+# Platform specific executables
+nmap.exe
+nmap
+zenmap.exe
+zenmap
+
+# Container and deployment
+Dockerfile.local
+docker-compose.override.yml
+k8s-local/
+helm-local/
+.dockerignore.local
+
+# Certificate and SSL files
+*.crt
+*.cer
+*.ca-bundle
+ssl/
+certs/
+
+# macOS specific
+.AppleDouble
+.LSOverride
+Icon?
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
