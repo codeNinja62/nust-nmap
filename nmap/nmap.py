@@ -7,6 +7,56 @@ Complete implementation of nmap functionality with enhanced capabilities built i
 the original API. No "Enhanced" or duplicated classes - just improved functionality
 within the standard API.
 
+This module provides a comprehensive Python interface to the nmap network scanning
+tool, designed for network and vulnerability analysis systems. It exposes all nmap
+features through a clean, Pythonic API while adding enterprise-grade enhancements.
+
+Key Features:
+- Complete nmap feature coverage (all scan types, NSE, evasion, etc.)
+- Intelligent caching with configurable TTL
+- Async and memory-efficient scanning
+- Advanced evasion and stealth capabilities
+- Comprehensive validation and error handling
+- Performance monitoring and resource management
+- Multiple output formats (XML, JSON, CSV)
+- Thread-safe operations
+- Security-focused design
+
+Quick Start Examples:
+
+Basic Scanning:
+    >>> import nmap
+    >>> nm = nmap.PortScanner()
+    >>> result = nm.scan('192.168.1.1', '22-443')
+    >>> print(nm.csv())
+
+Advanced Network Discovery:
+    >>> nm = nmap.PortScanner()
+    >>> result = nm.network_discovery('192.168.1.0/24')
+    >>> alive_hosts = nm.all_hosts()
+
+Vulnerability Assessment:
+    >>> nm = nmap.PortScanner()
+    >>> result = nm.vuln_scan('target.com', '80,443')
+    >>> vulns = nm.vulnerability_summary()
+
+Stealth Scanning:
+    >>> nm = nmap.PortScanner()
+    >>> result = nm.scan_with_evasion('target.com', 
+    ...                               profile=nmap.EvasionProfile.GHOST)
+
+Async Scanning:
+    >>> def callback(host, data):
+    ...     print(f"Found host: {host}")
+    >>> 
+    >>> nm_async = nmap.PortScannerAsync()
+    >>> nm_async.scan('192.168.1.0/24', callback=callback)
+
+Memory-Efficient Large Network Scanning:
+    >>> nm_yield = nmap.PortScannerYield()
+    >>> for host, data in nm_yield.scan('10.0.0.0/16'):
+    ...     process_host_data(host, data)
+
 Source code : https://github.com/codeNinja62/nust-nmap
 
 Author:
@@ -76,6 +126,18 @@ from xml.etree import ElementTree as ET
 __author__ = "Sameer Ahmed (sameer.cs@proton.me)"
 __version__ = "2.0.0"
 __last_modification__ = "2025.07.09"
+
+# =====================================================================
+# OPTIONAL DEPENDENCIES
+# =====================================================================
+
+# Optional psutil import for advanced resource monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None  # type: ignore
+    PSUTIL_AVAILABLE = False
 
 # =====================================================================
 # LOGGING AND CONFIGURATION
@@ -207,7 +269,7 @@ def _cache_key(hosts: str, arguments: str) -> str:
 
 def _is_cache_valid(timestamp: float) -> bool:
     """Check if cached result is still valid"""
-    return time.time() - timestamp < _cache_max
+    return time.time() - timestamp < _cache_max_age
 
 # =====================================================================
 # CORE SCANNER CLASS
@@ -361,7 +423,7 @@ class PortScanner:
             
             # Handle timeout
             try:
-                stdout, stderr = self._handle_scan_timeout(process, timeout)
+                stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
@@ -647,6 +709,56 @@ class PortScanner:
     def nmap_version(self) -> Tuple[int, int]:
         """Get nmap version"""
         return self._nmap_version_number
+    
+    def __getitem__(self, host: str):
+        """Dictionary-like access to scan results for backward compatibility"""
+        if host not in self._scan_result.get('scan', {}):
+            raise KeyError(f"Host {host} not found in scan results")
+        
+        # Create a dynamic class that behaves like PortScannerHostDict
+        class HostDict(dict):
+            def __init__(self, scan_result, host):
+                super().__init__(scan_result.get('scan', {}).get(host, {}))
+                self._scan_result = scan_result
+                self._host = host
+            
+            def hostnames(self):
+                hostnames_list = self.get('hostnames', [])
+                return [hn.get('name', '') for hn in hostnames_list if hn.get('name')]
+            
+            def hostname(self):
+                hostnames = self.hostnames()
+                return hostnames[0] if hostnames else ''
+            
+            def state(self):
+                return self.get('status', {}).get('state', 'unknown')
+            
+            def all_tcp(self):
+                return self.get('tcp', {})
+            
+            def all_udp(self):
+                return self.get('udp', {})
+            
+            def has_tcp(self, port):
+                return port in self.get('tcp', {})
+            
+            def tcp(self, port):
+                return self.get('tcp', {}).get(port, {})
+        
+        return HostDict(self._scan_result, host)
+    
+    def __contains__(self, host: str) -> bool:
+        """Check if host exists in scan results"""
+        return self.has_host(host)
+    
+    def keys(self):
+        """Get all host keys"""
+        return self._scan_result.get('scan', {}).keys()
+    
+    def items(self):
+        """Get all host items as (host, PortScannerHostDict) pairs"""
+        for host in self._scan_result.get('scan', {}):
+            yield host, PortScannerHostDict(self._scan_result, host)
     
     # =================================================================
     # DIRECT API METHODS FOR ALL NMAP FEATURES
@@ -1205,6 +1317,272 @@ class PortScanner:
         
         return ET.tostring(root, encoding='unicode')
     
+    def _validate_host_specification(self, hosts: str) -> bool:
+        """Comprehensive host specification validation"""
+        if not hosts or not hosts.strip():
+            raise PortScannerError("Host specification cannot be empty")
+        
+        hosts = hosts.strip()
+        
+        # Split by comma to handle multiple hosts
+        host_parts = [h.strip() for h in hosts.split(',')]
+        
+        for host_spec in host_parts:
+            if not host_spec:
+                continue
+                
+            # Check for CIDR notation
+            if '/' in host_spec:
+                try:
+                    ipaddress.ip_network(host_spec, strict=False)
+                    continue
+                except ValueError:
+                    pass
+            
+            # Check for IP range notation
+            if '-' in host_spec and '.' in host_spec:
+                try:
+                    base, range_part = host_spec.rsplit('.', 1)
+                    if '-' in range_part:
+                        start, end = range_part.split('-', 1)
+                        start_num, end_num = int(start), int(end)
+                        if not (0 <= start_num <= 255 and 0 <= end_num <= 255 and start_num <= end_num):
+                            raise PortScannerError(f"Invalid IP range in host specification: {host_spec}")
+                        # Validate base IP
+                        base_parts = base.split('.')
+                        if len(base_parts) != 3 or not all(0 <= int(part) <= 255 for part in base_parts):
+                            raise PortScannerError(f"Invalid IP base in range specification: {host_spec}")
+                        continue
+                except (ValueError, IndexError):
+                    pass
+            
+            # Check for single IP address
+            try:
+                ipaddress.ip_address(host_spec)
+                continue
+            except ValueError:
+                pass
+            
+            # Check for hostname (basic validation)
+            if re.match(r'^[a-zA-Z0-9.-]+$', host_spec) and not host_spec.startswith('.') and not host_spec.endswith('.'):
+                continue
+            
+            # If none of the above, it's invalid
+            raise PortScannerError(f"Invalid host specification: {host_spec}")
+        
+        return True
+
+    def _validate_port_specification(self, ports: Optional[str]) -> bool:
+        """Comprehensive port specification validation"""
+        if ports is None or not ports.strip():
+            return True  # No ports specified is valid
+        
+        ports = ports.strip()
+        
+        # Split by comma to handle multiple port specs
+        port_parts = [p.strip() for p in ports.split(',')]
+        
+        for port_spec in port_parts:
+            if not port_spec:
+                continue
+            
+            # Check for port range
+            if '-' in port_spec:
+                try:
+                    start, end = port_spec.split('-', 1)
+                    start_num, end_num = int(start), int(end)
+                    if not (1 <= start_num <= 65535 and 1 <= end_num <= 65535 and start_num <= end_num):
+                        raise PortScannerError(f"Invalid port range: {port_spec}")
+                except ValueError:
+                    raise PortScannerError(f"Invalid port range format: {port_spec}")
+                continue
+            
+            # Check for single port
+            try:
+                port_num = int(port_spec)
+                if not (1 <= port_num <= 65535):
+                    raise PortScannerError(f"Port number out of range (1-65535): {port_num}")
+            except ValueError:
+                raise PortScannerError(f"Invalid port specification: {port_spec}")
+        
+        return True
+
+    def _validate_nmap_arguments(self, arguments: str) -> bool:
+        """Validate nmap arguments for security and correctness"""
+        if not arguments:
+            return True
+        
+        # Dangerous arguments to block
+        dangerous_patterns = [
+            r'--script.*\.\.',  # Directory traversal in scripts
+            r'-oN\s+/dev/',     # Writing to device files
+            r'-oX\s+/dev/',     # Writing to device files
+            r'-oG\s+/dev/',     # Writing to device files
+            r'[;&|`$]',         # Shell injection characters
+            r'--resume.*\.\.',  # Directory traversal in resume
+        ]
+        
+        for pattern in dangerous_patterns:
+            if re.search(pattern, arguments, re.IGNORECASE):
+                raise PortScannerError(f"Potentially dangerous argument detected: {arguments}")
+        
+        # Check for conflicting scan types
+        scan_type_args = ['-sS', '-sT', '-sA', '-sW', '-sM', '-sU', '-sN', '-sF', '-sX', '-sO', '-sY', '-sZ']
+        found_scan_types = [arg for arg in scan_type_args if arg in arguments]
+        if len(found_scan_types) > 1:
+            logger.warning(f"Multiple scan types detected: {found_scan_types}. Nmap will use the last one.")
+        
+        return True
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename for output operations"""
+        if not filename:
+            raise PortScannerError("Filename cannot be empty")
+        
+        # Remove dangerous characters
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        
+        # Remove control characters
+        sanitized = re.sub(r'[\x00-\x1f\x7f]', '', sanitized)
+        
+        # Ensure not too long
+        if len(sanitized) > 255:
+            name, ext = os.path.splitext(sanitized)
+            sanitized = name[:255-len(ext)] + ext
+        
+        # Ensure not empty after sanitization
+        if not sanitized or sanitized.isspace():
+            raise PortScannerError("Filename becomes empty after sanitization")
+        
+        return sanitized
+
+    def _check_nmap_requirements(self, arguments: str, sudo: bool) -> None:
+        """Check if nmap requirements are met for the given arguments"""
+        # Check for privileged operations
+        privileged_operations = [
+            '-sS', '-sF', '-sN', '-sX', '-sO', '-sY', '-sZ',  # Raw socket scans
+            '--traceroute',  # Usually requires privileges
+            '-O',  # OS detection
+        ]
+        
+        needs_privilege = any(op in arguments for op in privileged_operations)
+        
+        if needs_privilege and not sudo and not sys.platform.startswith('win'):
+            logger.warning(
+                "Scan may require root privileges. Consider using sudo=True or running as root."
+            )
+        
+        # Check nmap version compatibility
+        if self._nmap_version_number < (7, 0):
+            unsupported_features = []
+            
+            # Features requiring newer nmap versions
+            if '--script' in arguments and 'ssl-cert' in arguments:
+                unsupported_features.append('ssl-cert script')
+            
+            if unsupported_features:
+                logger.warning(f"Features may not be supported in nmap {'.'.join(map(str, self._nmap_version_number))}: {', '.join(unsupported_features)}")
+
+    def _validate_scan_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and clean scan results"""
+        if not isinstance(result, dict):
+            raise PortScannerError("Invalid scan result format")
+        
+        # Ensure required structure exists
+        if 'scan' not in result:
+            result['scan'] = {}
+        
+        if 'nmap' not in result:
+            result['nmap'] = {'command_line': '', 'scaninfo': {}, 'scanstats': {}}
+        
+        # Validate host data structure
+        for host, host_data in result.get('scan', {}).items():
+            if not isinstance(host_data, dict):
+                logger.warning(f"Invalid host data for {host}, skipping")
+                continue
+            
+            # Ensure required protocol dictionaries exist
+            for protocol in ['tcp', 'udp', 'ip', 'sctp']:
+                if protocol not in host_data:
+                    host_data[protocol] = {}
+                elif not isinstance(host_data[protocol], dict):
+                    logger.warning(f"Invalid {protocol} data for {host}, resetting")
+                    host_data[protocol] = {}
+        
+        return result
+
+    def _get_resource_limits(self) -> Dict[str, Any]:
+        """Get current resource limits and constraints"""
+        limits = {
+            'max_memory_mb': 1024,  # Default 1GB limit
+            'max_scan_duration': 3600,  # Default 1 hour
+            'max_concurrent_scans': 10,  # Default max concurrent
+            'max_hosts_per_scan': 1000,  # Default max hosts
+        }
+        
+        # Try to get system memory info
+        if PSUTIL_AVAILABLE and psutil is not None:
+            try:
+                memory = psutil.virtual_memory()
+                # Use up to 25% of available memory
+                limits['max_memory_mb'] = int(memory.available / (1024 * 1024) * 0.25)
+            except Exception:
+                # psutil import failed at runtime
+                logger.debug("psutil failed at runtime, using default memory limits")
+        else:
+            logger.debug("psutil not available, using default memory limits")
+        
+        return limits
+
+    def _monitor_resource_usage(self, start_time: float, max_duration: int) -> None:
+        """Monitor resource usage during scan"""
+        current_time = time.time()
+        elapsed = current_time - start_time
+        
+        if elapsed > max_duration:
+            raise PortScannerTimeout(f"Scan exceeded maximum duration of {max_duration} seconds")
+        
+        # Check memory usage if psutil is available
+        if PSUTIL_AVAILABLE and psutil is not None:
+            try:
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / (1024 * 1024)
+                limits = self._get_resource_limits()
+                
+                if memory_mb > limits['max_memory_mb']:
+                    logger.warning(f"High memory usage detected: {memory_mb:.1f}MB")
+            except Exception:
+                # psutil failed at runtime
+                logger.debug("psutil failed at runtime, skipping memory monitoring")
+        else:
+            logger.debug("psutil not available, skipping memory monitoring")
+
+    def _create_secure_temp_file(self, suffix: str = '.xml') -> str:
+        """Create a secure temporary file for scan output"""
+        try:
+            fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix='nmap_scan_')
+            os.close(fd)  # Close the file descriptor, we just need the path
+            
+            # Set restrictive permissions (owner only)
+            os.chmod(temp_path, 0o600)
+            
+            return temp_path
+        except OSError as e:
+            raise PortScannerError(f"Failed to create temporary file: {e}")
+
+    def _cleanup_temp_files(self, temp_files: List[str]) -> None:
+        """Clean up temporary files securely"""
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    # Overwrite file content before deletion for security
+                    with open(temp_file, 'w') as f:
+                        f.write('0' * 1024)  # Overwrite with zeros
+                    os.remove(temp_file)
+                    logger.debug(f"Cleaned up temporary file: {temp_file}")
+            except OSError as e:
+                logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
+    
     def vulnerability_summary(self) -> Dict[str, List[str]]:
         """Extract vulnerability information from script results"""
         vulnerabilities = {'high': [], 'medium': [], 'low': [], 'info': []}
@@ -1589,425 +1967,3 @@ __all__ = [
     # Configuration
     'enable_performance_monitoring', 'set_cache_max_age', 'clear_global_cache'
 ]
-
-# =================================================================
-# ROBUST ERROR HANDLING AND VALIDATION METHODS
-# =================================================================
-
-def _validate_host_specification(self, hosts: str) -> bool:
-    """Comprehensive host specification validation"""
-    if not hosts or not hosts.strip():
-        raise PortScannerError("Host specification cannot be empty")
-    
-    hosts = hosts.strip()
-    
-    # Split by comma to handle multiple hosts
-    host_parts = [h.strip() for h in hosts.split(',')]
-    
-    for host_spec in host_parts:
-        if not host_spec:
-            continue
-            
-        # Check for CIDR notation
-        if '/' in host_spec:
-            try:
-                ipaddress.ip_network(host_spec, strict=False)
-                continue
-            except ValueError:
-                pass
-        
-        # Check for IP range notation
-        if '-' in host_spec and '.' in host_spec:
-            try:
-                base, range_part = host_spec.rsplit('.', 1)
-                if '-' in range_part:
-                    start, end = range_part.split('-', 1)
-                    start_num, end_num = int(start), int(end)
-                    if not (0 <= start_num <= 255 and 0 <= end_num <= 255 and start_num <= end_num):
-                        raise PortScannerError(f"Invalid IP range in host specification: {host_spec}")
-                    # Validate base IP
-                    base_parts = base.split('.')
-                    if len(base_parts) != 3 or not all(0 <= int(part) <= 255 for part in base_parts):
-                        raise PortScannerError(f"Invalid IP base in range specification: {host_spec}")
-                    continue
-            except (ValueError, IndexError):
-                pass
-        
-        # Check for single IP address
-        try:
-            ipaddress.ip_address(host_spec)
-            continue
-        except ValueError:
-            pass
-        
-        # Check for hostname (basic validation)
-        if re.match(r'^[a-zA-Z0-9.-]+$', host_spec) and not host_spec.startswith('.') and not host_spec.endswith('.'):
-            continue
-        
-        # If none of the above, it's invalid
-        raise PortScannerError(f"Invalid host specification: {host_spec}")
-    
-    return True
-
-def _validate_port_specification(self, ports: Optional[str]) -> bool:
-    """Comprehensive port specification validation"""
-    if ports is None or not ports.strip():
-        return True  # No ports specified is valid
-    
-    ports = ports.strip()
-    
-    # Split by comma to handle multiple port specs
-    port_parts = [p.strip() for p in ports.split(',')]
-    
-    for port_spec in port_parts:
-        if not port_spec:
-            continue
-        
-        # Check for port range
-        if '-' in port_spec:
-            try:
-                start, end = port_spec.split('-', 1)
-                start_num, end_num = int(start), int(end)
-                if not (1 <= start_num <= 65535 and 1 <= end_num <= 65535 and start_num <= end_num):
-                    raise PortScannerError(f"Invalid port range: {port_spec}")
-            except ValueError:
-                raise PortScannerError(f"Invalid port range format: {port_spec}")
-            continue
-        
-        # Check for single port
-        try:
-            port_num = int(port_spec)
-            if not (1 <= port_num <= 65535):
-                raise PortScannerError(f"Port number out of range (1-65535): {port_num}")
-        except ValueError:
-            raise PortScannerError(f"Invalid port specification: {port_spec}")
-    
-    return True
-
-def _validate_nmap_arguments(self, arguments: str) -> bool:
-    """Validate nmap arguments for security and correctness"""
-    if not arguments:
-        return True
-    
-    # Dangerous arguments to block
-    dangerous_patterns = [
-        r'--script.*\.\.',  # Directory traversal in scripts
-        r'-oN\s+/dev/',     # Writing to device files
-        r'-oX\s+/dev/',     # Writing to device files
-        r'-oG\s+/dev/',     # Writing to device files
-        r'[;&|`$]',         # Shell injection characters
-        r'--resume.*\.\.',  # Directory traversal in resume
-    ]
-    
-    for pattern in dangerous_patterns:
-        if re.search(pattern, arguments, re.IGNORECASE):
-            raise PortScannerError(f"Potentially dangerous argument detected: {arguments}")
-    
-    # Check for conflicting scan types
-    scan_type_args = ['-sS', '-sT', '-sA', '-sW', '-sM', '-sU', '-sN', '-sF', '-sX', '-sO', '-sY', '-sZ']
-    found_scan_types = [arg for arg in scan_type_args if arg in arguments]
-    if len(found_scan_types) > 1:
-        logger.warning(f"Multiple scan types detected: {found_scan_types}. Nmap will use the last one.")
-    
-    return True
-
-def _sanitize_filename(self, filename: str) -> str:
-    """Sanitize filename for output operations"""
-    if not filename:
-        raise PortScannerError("Filename cannot be empty")
-    
-    # Remove dangerous characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
-    
-    # Remove control characters
-    sanitized = re.sub(r'[\x00-\x1f\x7f]', '', sanitized)
-    
-    # Ensure not too long
-    if len(sanitized) > 255:
-        name, ext = os.path.splitext(sanitized)
-        sanitized = name[:255-len(ext)] + ext
-    
-    # Ensure not empty after sanitization
-    if not sanitized or sanitized.isspace():
-        raise PortScannerError("Filename becomes empty after sanitization")
-    
-    return sanitized
-
-def _check_nmap_requirements(self, arguments: str, sudo: bool) -> None:
-    """Check if nmap requirements are met for the given arguments"""
-    # Check for privileged operations
-    privileged_operations = [
-        '-sS', '-sF', '-sN', '-sX', '-sO', '-sY', '-sZ',  # Raw socket scans
-        '--traceroute',  # Usually requires privileges
-        '-O',  # OS detection
-    ]
-    
-    needs_privilege = any(op in arguments for op in privileged_operations)
-    
-    if needs_privilege and not sudo and not sys.platform.startswith('win'):
-        if os.geteuid() != 0:  # Not running as root
-            logger.warning(
-                "Scan may require root privileges. Consider using sudo=True or running as root."
-            )
-    
-    # Check nmap version compatibility
-    if self._nmap_version_number < (7, 0):
-        unsupported_features = []
-        
-        # Features requiring newer nmap versions
-        if '--script' in arguments and 'ssl-cert' in arguments:
-            unsupported_features.append('ssl-cert script')
-        
-        if unsupported_features:
-            logger.warning(f"Features may not be supported in nmap {'.'.join(map(str, self._nmap_version_number))}: {', '.join(unsupported_features)}")
-
-def _handle_scan_timeout(self, process: subprocess.Popen, timeout: Optional[int]) -> Tuple[str, str]:
-    """Handle scan timeout with graceful cleanup"""
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-        return stdout, stderr
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Scan timeout after {timeout} seconds, terminating process")
-        
-        # Try graceful termination first
-        process.terminate()
-        try:
-            stdout, stderr = process.communicate(timeout=5)
-            logger.info("Process terminated gracefully")
-            return stdout, stderr
-        except subprocess.TimeoutExpired:
-            # Force kill if graceful termination fails
-            logger.warning("Graceful termination failed, forcing kill")
-            process.kill()
-            stdout, stderr = process.communicate()
-            raise PortScannerTimeout(f"Scan timeout after {timeout} seconds")
-
-def _validate_scan_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate and clean scan results"""
-    if not isinstance(result, dict):
-        raise PortScannerError("Invalid scan result format")
-    
-    # Ensure required structure exists
-    if 'scan' not in result:
-        result['scan'] = {}
-    
-    if 'nmap' not in result:
-        result['nmap'] = {'command_line': '', 'scaninfo': {}, 'scanstats': {}}
-    
-    # Validate host data structure
-    for host, host_data in result.get('scan', {}).items():
-        if not isinstance(host_data, dict):
-            logger.warning(f"Invalid host data for {host}, skipping")
-            continue
-        
-        # Ensure required protocol dictionaries exist
-        for protocol in ['tcp', 'udp', 'ip', 'sctp']:
-            if protocol not in host_data:
-                host_data[protocol] = {}
-            elif not isinstance(host_data[protocol], dict):
-                logger.warning(f"Invalid {protocol} data for {host}, resetting")
-                host_data[protocol] = {}
-    
-    return result
-
-def _get_resource_limits(self) -> Dict[str, Any]:
-    """Get current resource limits and constraints"""
-    limits = {
-        'max_memory_mb': 1024,  # Default 1GB limit
-        'max_scan_duration': 3600,  # Default 1 hour
-        'max_concurrent_scans': 10,  # Default max concurrent
-        'max_hosts_per_scan': 1000,  # Default max hosts
-    }
-    
-    # Try to get system memory info
-    try:
-        import psutil
-        memory = psutil.virtual_memory()
-        # Use up to 25% of available memory
-        limits['max_memory_mb'] = int(memory.available / (1024 * 1024) * 0.25)
-    except ImportError:
-        # psutil not available, use defaults
-        pass
-    
-    return limits
-
-def _monitor_resource_usage(self, start_time: float, max_duration: int) -> None:
-    """Monitor resource usage during scan"""
-    current_time = time.time()
-    elapsed = current_time - start_time
-    
-    if elapsed > max_duration:
-        raise PortScannerTimeout(f"Scan exceeded maximum duration of {max_duration} seconds")
-    
-    # Check memory usage if psutil is available
-    try:
-        import psutil
-        process = psutil.Process()
-        memory_mb = process.memory_info().rss / (1024 * 1024)
-        limits = self._get_resource_limits()
-        
-        if memory_mb > limits['max_memory_mb']:
-            logger.warning(f"High memory usage detected: {memory_mb:.1f}MB")
-    except ImportError:
-        # psutil not available, skip memory monitoring
-        pass
-
-def _create_secure_temp_file(self, suffix: str = '.xml') -> str:
-    """Create a secure temporary file for scan output"""
-    try:
-        fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix='nmap_scan_')
-        os.close(fd)  # Close the file descriptor, we just need the path
-        
-        # Set restrictive permissions (owner only)
-        os.chmod(temp_path, 0o600)
-        
-        return temp_path
-    except OSError as e:
-        raise PortScannerError(f"Failed to create temporary file: {e}")
-
-def _cleanup_temp_files(self, temp_files: List[str]) -> None:
-    """Clean up temporary files securely"""
-    for temp_file in temp_files:
-        try:
-            if os.path.exists(temp_file):
-                # Overwrite file content before deletion for security
-                with open(temp_file, 'w') as f:
-                    f.write('0' * 1024)  # Overwrite with zeros
-                os.remove(temp_file)
-                logger.debug(f"Cleaned up temporary file: {temp_file}")
-        except OSError as e:
-            logger.warning(f"Failed to clean up temporary file {temp_file}: {e}")
-
-# =================================================================
-# ENHANCED SCAN METHOD WITH FULL VALIDATION
-# =================================================================
-
-def scan(
-    self, 
-    hosts: str = "127.0.0.1", 
-    ports: Optional[str] = None,
-    arguments: str = "-sV",
-    sudo: bool = False,
-    timeout: Optional[int] = None,
-    evasion_profile: Optional[EvasionProfile] = None
-) -> Dict[str, Any]:
-    """
-    Scan given hosts with enhanced capabilities built-in.
-    
-    Args:
-        hosts: Host(s) to scan
-        ports: Port specification
-        arguments: Nmap arguments
-        sudo: Use sudo (Unix/Linux only)
-        timeout: Scan timeout in seconds
-        evasion_profile: Enable stealth/evasion techniques
-        
-    Returns:
-        Dictionary containing scan results
-    """
-    if not _validate_targets(hosts):
-        raise PortScannerError("Invalid target specification")
-    
-    # Check cache first (if enabled)
-    cache_key = _cache_key(hosts, arguments) if self._enable_caching else None
-    if cache_key and cache_key in _scan_cache:
-        cached_result, timestamp = _scan_cache[cache_key]
-        if _is_cache_valid(timestamp):
-            logger.debug(f"Using cached result for {hosts}")
-            self._scan_result = cached_result
-            return cached_result
-    
-    # Validate host specification
-    self._validate_host_specification(hosts)
-    
-    # Validate port specification
-    self._validate_port_specification(ports)
-    
-    # Validate nmap arguments
-    self._validate_nmap_arguments(arguments)
-    
-    # Build command
-    nmap_command = []
-    
-    # Add sudo if requested (Unix/Linux only)
-    if sudo and not sys.platform.startswith('win'):
-        nmap_command.append('sudo')
-    
-    nmap_command.append(self._nmap_path)
-    
-    # Add evasion arguments if profile specified
-    if evasion_profile:
-        evasion_args = _build_evasion_arguments(evasion_profile)
-        nmap_command.extend(evasion_args)
-        logger.debug(f"Applied evasion profile: {evasion_profile.value}")
-    
-    # Add ports if specified
-    if ports:
-        nmap_command.extend(['-p', str(ports)])
-    
-    # Add custom arguments
-    if arguments:
-        # Parse arguments safely
-        try:
-            parsed_args = shlex.split(arguments)
-            nmap_command.extend(parsed_args)
-        except ValueError as e:
-            raise PortScannerError(f"Invalid arguments: {e}")
-    
-    # Always output XML for parsing
-    nmap_command.extend(['-oX', '-'])
-    
-    # Add hosts
-    nmap_command.append(hosts)
-    
-    # Execute scan
-    start_time = time.time()
-    temp_files = []
-    
-    try:
-        logger.debug(f"Running: {' '.join(nmap_command)}")
-        
-        # Create secure temporary file for output
-        temp_xml_file = self._create_secure_temp_file(suffix='.xml')
-        temp_files.append(temp_xml_file)
-        
-        # Redirect output to temporary file
-        with open(temp_xml_file, 'w') as xml_output:
-            process = subprocess.Popen(
-                nmap_command,
-                stdout=xml_output,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            # Handle timeout
-            stdout, stderr = self._handle_scan_timeout(process, timeout)
-        
-        # Parse results
-        with open(temp_xml_file, 'r') as xml_output:
-            scan_result = self.analyse_nmap_xml_scan(xml_output.read(), stderr)
-        
-        # Store performance stats
-        scan_duration = time.time() - start_time
-        self._performance_stats = {
-            'scan_duration': scan_duration,
-            'hosts_scanned': len(scan_result.get('scan', {})),
-            'command_used': ' '.join(nmap_command)
-        }
-        
-        # Cache result if caching enabled
-        if cache_key and self._enable_caching:
-            with _scan_lock:
-                _scan_cache[cache_key] = (scan_result, time.time())
-        
-        return scan_result
-    
-    except FileNotFoundError:
-        raise PortScannerError(f"nmap executable not found at {self._nmap_path}")
-    except PermissionError:
-        raise PortScannerError("Permission denied. Try running with sudo.")
-    except Exception as e:
-        raise PortScannerError(f"Scan failed: {e}")
-    finally:
-        # Cleanup temporary files
-        self._cleanup_temp_files(temp_files)

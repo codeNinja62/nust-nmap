@@ -1,36 +1,38 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-nust-nmap - Enterprise-Grade Python Nmap Wrapper
+nust-nmap Python library
 
-nust-nmap is a comprehensive Python library providing 100% coverage of nmap 7.9.7+ 
-features. It offers enterprise-grade scanning capabilities with advanced evasion, 
-comprehensive NSE scripting, and professional result parsing.
+Unified Enterprise-Grade Python Nmap Wrapper with enhanced capabilities
+built into the original API. No "Enhanced" or duplicated classes.
 
-Key Features:
-- 100% nmap feature coverage (scan types, evasion, NSE, timing, output formats)
-- Enterprise-grade security scanning and evasion capabilities  
-- Comprehensive async/sync scanning with type safety
-- Advanced result parsing and XML/JSON export capabilities
-- Professional configuration management and plugin architecture
-- Single unified API - enhanced original functions instead of duplicates
+Quick Start:
+    >>> import nmap
+    >>> nm = nmap.PortScanner()
+    >>> result = nm.scan('127.0.0.1', '22-443')
+    >>> print(nm.csv())
 
-Author:
-* Sameer Ahmed - sameer.cs@proton.me
+Advanced Usage:
+    >>> # Stealth scanning
+    >>> result = nm.scan_with_evasion('target.com', profile=nmap.EvasionProfile.GHOST)
+    >>> 
+    >>> # Async scanning
+    >>> def callback(host, data): print(f"Found: {host}")
+    >>> nm_async = nmap.PortScannerAsync()
+    >>> nm_async.scan('192.168.1.0/24', callback=callback)
+    >>>
+    >>> # Memory-efficient large network scanning
+    >>> nm_yield = nmap.PortScannerYield()
+    >>> for host, data in nm_yield.scan('10.0.0.0/16'):
+    ...     process_host(host, data)
 
-License: GPL v3 or any later version
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
+Author: Sameer Ahmed (sameer.cs@proton.me)
+License: GPL v3 or later
+Source: https://github.com/codeNinja62/nust-nmap
 """
+
+__version__ = "2.0.0"
+__author__ = "Sameer Ahmed"
 
 # Type imports
 from typing import Optional, List, Dict, Any
@@ -53,29 +55,24 @@ from .nmap import (
     PortScannerError,
     PortScannerTimeout,
     
-    # Enterprise enums and types
+    # Enums
     ScanType,
-    PingType,
-    TimingTemplate,
-    OutputFormat,
-    NSECategory,
     EvasionProfile,
     
-    # Configuration classes (clean naming)
-    TimingConfig,
-    EvasionConfig,
-    NSEConfig,
-    
     # Utility functions
-    convert_nmap_output_to_encoding,
     enable_performance_monitoring,
     set_cache_max_age,
-    clear_scan_cache,
+    clear_global_cache,
     
     # Convenience functions
-    quick_scan,
-    stealth_scan,
-    vulnerability_scan,
+    scan_stealth,
+    scan_ghost,
+    scan_progressive,
+    
+    # Modern aliases
+    Scanner,
+    AsyncScanner,
+    YieldScanner,
 )
 
 # === ALIASES FOR CONVENIENCE ===
@@ -84,10 +81,9 @@ Scanner = PortScanner              # Modern alias for new projects
 AsyncScanner = PortScannerAsync    # Modern alias for async scanning
 YieldScanner = PortScannerYield    # Modern alias for yield scanning
 
-# Configuration aliases for consistency
-TimingOptions = TimingConfig       # Alternative name
-EvasionOptions = EvasionConfig     # Alternative name
-NSEOptions = NSEConfig            # Alternative name
+# Legacy compatibility
+EnhancedPortScanner = PortScanner    
+ComprehensiveScanner = PortScanner   
 
 # === CONVENIENCE API FUNCTIONS ===
 def scan_with_evasion(targets: str, profile: EvasionProfile = EvasionProfile.STEALTH, **kwargs):
@@ -96,117 +92,55 @@ def scan_with_evasion(targets: str, profile: EvasionProfile = EvasionProfile.STE
     
     Args:
         targets: Target specification (IP, range, domain)
-        profile: Evasion profile (STEALTH, BASIC, GHOST, ADAPTIVE, ZERO_TRUST)
+        profile: Evasion profile (STEALTH, BASIC, GHOST, ADAPTIVE)
         **kwargs: Additional scan options
         
     Returns:
         Scan results with evasion applied
     """
     scanner = PortScanner()
-    
-    # Configure evasion based on profile
-    if profile == EvasionProfile.STEALTH:
-        evasion_config = EvasionConfig(
-            fragment_packets=True,
-            randomize_hosts=True,
-            data_length=25
-        )
-        timing_config = TimingConfig(template=TimingTemplate.SNEAKY)
-    elif profile == EvasionProfile.GHOST:
-        evasion_config = EvasionConfig(
-            fragment_packets=True,
-            randomize_hosts=True,
-            decoys=["192.0.2.1", "192.0.2.2", "192.0.2.3"],
-            spoof_mac="random"
-        )
-        timing_config = TimingConfig(template=TimingTemplate.PARANOID)
-    else:
-        evasion_config = EvasionConfig(fragment_packets=True)
-        timing_config = TimingConfig(template=TimingTemplate.POLITE)
-    
-    return scanner.scan(
-        hosts=targets,
-        evasion=evasion_config,
-        timing=timing_config,
-        **kwargs
-    )
+    return scanner.scan_with_evasion(targets, profile=profile, **kwargs)
 
-def scan_with_nse(targets: str, scripts: Optional[List[str]] = None, **kwargs):
-    """
-    Quick NSE script scanning.
-    
-    Args:
-        targets: Target specification
-        scripts: List of specific scripts to run
-        **kwargs: NSE and scan options
-        
-    Returns:
-        Comprehensive scan results with NSE output
-    """
+
+def scan_network(network: str, **kwargs) -> Dict[str, Any]:
+    """Quick network scan with sensible defaults"""
     scanner = PortScanner()
-    
-    nse_config = NSEConfig()
-    if scripts:
-        nse_config = NSEConfig(scripts=scripts)
-    else:
-        nse_config = NSEConfig(script_categories=[NSECategory.DEFAULT, NSECategory.VERSION])
-    
-    return scanner.scan(
-        hosts=targets, 
-        nse=nse_config,
-        **kwargs
-    )
+    return scanner.network_discovery(network, **kwargs)
 
-def scan_multiple_targets(targets_list, **kwargs):
-    """
-    Parallel scanning of multiple targets.
-    
-    Args:
-        targets_list: List of target specifications
-        **kwargs: Scan options applied to all targets
-        
-    Returns:
-        Dictionary mapping targets to scan results
-    """
+
+def scan_host(host: str, ports: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    """Quick host scan with service detection"""
     scanner = PortScanner()
-    results = {}
-    for target in targets_list:
-        try:
-            results[target] = scanner.scan(hosts=target, **kwargs)
-        except Exception as e:
-            results[target] = {"error": str(e)}
-    return results
+    return scanner.version_scan(host, ports, **kwargs)
 
-def discovery_scan(network: str, **kwargs):
-    """
-    Network discovery scanning (ping sweep).
-    
-    Args:
-        network: Network specification (e.g., '192.168.1.0/24')
-        **kwargs: Additional discovery options
-        
-    Returns:
-        Discovery scan results
-    """
+
+def scan_vulnerabilities(target: str, ports: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    """Quick vulnerability scan"""
     scanner = PortScanner()
-    return scanner.scan(
-        hosts=network, 
-        scan_type=ScanType.PING_ONLY,
-        **kwargs
-    )
+    return scanner.vuln_scan(target, ports, **kwargs)
 
-# === RECOMMENDED IMPORT PATTERNS ===
-# For new projects, use:
-#   from nmap import Scanner, ScanType, TimingConfig
-#   scanner = Scanner()
-#   result = scanner.scan("target.com", scan_type=ScanType.TCP_SYN)
-#
-# For legacy compatibility:
-#   import nmap
-#   scanner = nmap.PortScanner()
-#   result = scanner.scan("target.com", "80,443")
-#
-# For enterprise features:
-#   from nmap import PortScanner, EvasionConfig, NSEConfig
-#   scanner = PortScanner()
-#   result = scanner.scan("target.com", evasion=EvasionConfig(fragment_packets=True))
+
+# === PUBLIC API ===
+__all__ = [
+    # Core classes
+    'PortScanner', 'PortScannerAsync', 'PortScannerYield', 'PortScannerHostDict',
+    
+    # Modern aliases
+    'Scanner', 'AsyncScanner', 'YieldScanner',
+    
+    # Legacy compatibility
+    'EnhancedPortScanner', 'ComprehensiveScanner',
+    
+    # Exceptions
+    'PortScannerError', 'PortScannerTimeout',
+    
+    # Enums and types
+    'ScanType', 'EvasionProfile',
+    
+    # Convenience functions
+    'scan_with_evasion', 'scan_network', 'scan_host', 'scan_vulnerabilities',
+    'scan_stealth', 'scan_ghost', 'scan_progressive',
+    
+    # Configuration
+    'enable_performance_monitoring', 'set_cache_max_age', 'clear_global_cache',
+]
