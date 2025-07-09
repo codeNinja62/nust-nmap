@@ -124,8 +124,8 @@ from xml.etree import ElementTree as ET
 # =====================================================================
 
 __author__ = "Sameer Ahmed (sameer.cs@proton.me)"
-__version__ = "2.0.0"
-__last_modification__ = "2025.07.09"
+__version__ = "2.1.1"
+__last_modification__ = "2025.07.10"
 
 # =====================================================================
 # OPTIONAL DEPENDENCIES
