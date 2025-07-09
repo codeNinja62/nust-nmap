@@ -1,12 +1,21 @@
 # setup.py example
 from setuptools import setup, find_packages
+import re
+
+def get_version_from_nmap():
+    with open("nmap/nmap.py", "r", encoding="utf-8") as f:
+        content = f.read()
+    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+    if match:
+        return match.group(1)
+    raise RuntimeError("Unable to find version string in nmap/nmap.py")
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="nust-nmap",
-    version="1.2",
+    version=get_version_from_nmap(),
     author="Sameer Ahmed",
     author_email="sameer.cs@proton.me",
     description="Python wrapper for nmap network scanner",

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0] - 2025-01-10
 
+## [2.1.0] - 2025-07-10
+
+### Added
+- Optimization & architecture recommendations documented in `todo.md` (performance, memory, validation, extensibility, code quality)
+- Enhanced `.gitignore` for security, platform, and project-specific artifacts
+- Streamlined `README.md` and created `README_PROGRAMMER_GUIDE.md` for technical reference
+- Updated TODOs to reflect real gaps and future optimization opportunities
+- Provided class-based, extensible design for evasion, port, and script profiles (prebuilt and user-defined)
+
+### Enhanced
+- Refined documentation structure for clarity and separation of concerns
+- Provided detailed optimization patterns (LRU cache, streaming XML, async/thread pool, resource management, command builder, unified validation)
+- Improved contextual error handling and input validation patterns
+
+### Fixed
+- Removed redundant and outdated documentation content
+- Updated test and CI/CD requirements in TODOs
+
+### Notes
+- All changes follow the highest quality standards as defined in `.github/instructions/p.instructions.md`
+
 ### Added
 - Production-grade Python nmap wrapper with comprehensive feature coverage
 - Built-in firewall and IDS evasion capabilities with predefined profiles
