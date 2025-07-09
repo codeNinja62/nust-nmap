@@ -36,6 +36,7 @@ __author__ = "Sameer Ahmed"
 
 # Type imports
 from typing import Optional, List, Dict, Any
+from .nmap import __version__, __author__
 
 # === UNIFIED ENTERPRISE API ===
 # Single file with enhanced original functions - no duplicates
