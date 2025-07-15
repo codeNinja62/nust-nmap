@@ -1,8 +1,8 @@
 <h1 align="center">nust-nmap</h1>
 <p align="center">
     <img src="https://badge.fury.io/py/nust-nmap.svg" alt="PyPI version" />
-    <img src="https://img.shields.io/pypi/pyversions/nust-nmap.svg" alt="Python versions" />
-    <img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0" />
+    <img src="https://img.shields.io/badge/python-3.8%2B-blue.svg" alt="Python 3.8+" />
+    <img src="https://img.shields.io/badge/License-SSPL--1.0-blue.svg" alt="License: SSPL-1.0" />
     <img src="https://pepy.tech/badge/nust-nmap" alt="Downloads" />
 </p>
 
